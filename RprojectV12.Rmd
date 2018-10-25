@@ -1,0 +1,596 @@
+---
+title: "The R Project BIOS 6640, 2018"
+author: "Joanna Poczobutt"
+date: "October 17, 2018"
+output:
+  word_document: default
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=FALSE, message=F, warning=F)
+```
+
+```{r CLEANUP, include = FALSE}
+
+# clearing the environment
+op <- par()
+options(width=80)
+emptyenv()
+rm(list=ls())
+
+# *** PACKAGES ***
+library(RColorBrewer)
+library(sp)
+library(maptools) 
+library(lattice)
+library(latticeExtra)
+library(rgdal)
+library(gridExtra)
+library(tidyverse)
+
+```
+### Introduction
+
+Malaria is one of the most serious infectious diseases worldwide, and a major threat to public health, with 45% of the world's population being at risk of infection. In 2015, 200 million cases were reported globally, leading to 400 thousand deaths, most of which occurred in children under 5 years of age in Sub-Saharan Africa [1-3]. 
+
+Malaria in humans is caused by five species of single-cell Plasmodium parasites, which are transmitted by mosquitoes of the Anopheles genus. Typically, Anopheles bite from dusk to dawn. During the bite, a Plasmodium - infected mosquito injects into bloodstream sporozoites (infective motile stage of Plasmodium), which immediately invade the liver and replicate there. This leads to generation of thousands of the Plasmodium merozoites, which are released into bloodstream, where they enter red blood cells to further replicate, and then rupture out of the erythrocytes. The blood stage infection causes the clinical symptoms, and the onset of these symptoms typically occurs 7-10 days after the infective mosquito bite, but can be delayed as long as 14 days. Malaria can be asymptomatic, uncomplicated or severe. Initial symptoms include low-grade fever, chills, muscle aches and digestive symptoms. These symptoms can appear suddenly, and progress to drenching sweats, high fever and exhaustion, caused by the lysis of Plasmodium-infected red blood cells. Severe malaria is often fatal, and is associated with severe anemia and multi-organ damage, including cerebral malaria [3]. 
+
+What is heartening however, is that the efforts to eradicate malaria over the past 15 years have been remarkably successful. From 2000 to 2015, the incidence of malaria has dropped by 37%, and deaths have decreased by 60% worldwide. Much of this reduction is attributed to the increased use of three interventions: insecticide-treated bed nets, artemisinin-based therapies and indoor insecticide spraying [4-5]. Bolstered by these achievements, many countries have developed national elimination goals and the idea of total elimination of malaria is now considered a realistic goal. Unfortunately, vast disparities between countries exist in the global progress towards malaria eradication, with poor populations with limited access to health care continuing to be at the greatest risk. The Sub-Saharan Africa region shoulders the heaviest burden [4-5]. Thus, a well-coordinated effort on global level is necessary to continue successful fight against malaria. 
+
+The purpose of this project was to analyze the burden of malaria in Mozambique, in children under five years old, the age group which is at the greatest risk of developing severe malaria. I will examine the overall malaria burden, incidence per thousand, and the variation of these variables across the regions and provinces of Mozambique. In addition, the changes that occurred in between the years 2010 -2016 will be presented. Malaria, being a mosquito-borne disease, is related to weather patterns that favor the expansion of the Anopheles mosquito population, such as high humidity combined with warm temperature. However, there is a time lag between the onset of malaria symptoms and weather favorable for mosquito expansion. This is because of: (1) the incubation period of 7-14 days between the infective mosquito bite and the onset of symptoms, (2) the time required for the expansion of mosquito population, thought to be several weeks. The time lag is likely to be 2, 4, or 8 weeks. In this project, I will examine the temporal relationships between the incidence of malaria and the weather variables, in an attempt to establish a minimal time lag between the peak of malaria cases and the occurrence of weather favorable for the expansion of mosquito population. This project will provide pilot data to  identify areas of Mozambique with the greatest needs for intervention and estimate and time of the year when the intervention, aimed at eliminating the mosquito population, would be the most effective.
+
+
+###The data set
+
+The data set consists of weekly entries of malaria cases and weather parameters for each of the 142 Mozambique districts for the years 2010 - 2017.  The entries for 2017 cover only part of the year and were removed from the analysis. Also the province Maputo Cidade was removed. Analysis of the number of weekly entries per year per district revealed that they were multiple missing weeks for several districts each year (Supplemental Table I), however, the remediation of this problem is beyond the scope of this project. For further analyses, the district entries were averaged for each province.
+
+
+```{r malaria_data_import, include=FALSE}
+
+# import malaria data file
+# using "try"" function allows to try opening from my laptop or my desktop
+# without stopping the script due to an error
+
+# when working on laptop 
+try(mal <- read.csv('C:/Users/Joanna/OneDrive - The University of Colorado Denver/BIOS 6640/Week 5/Data/MozSyntheticMalaria.csv', stringsAsFactors = FALSE))
+
+# or when working on desktop
+try(mal <- read.csv('D:/OneDrive - The University of Colorado Denver/BIOS 6640/Week 5/Data/MozSyntheticMalaria.csv', stringsAsFactors = FALSE))
+
+# remove 2017 (incomplete year) and province Maputo Cidade
+mal <- subset(mal, Province != "MAPUTO CIDADE" & Epiyear != 2017)
+
+# check if we have any incomplete entries
+sum(!complete.cases(mal)) # all entries complete
+
+# Check the number of entries per District per Year
+# This should be the same for all Districts for a given year 
+# and equal to the number of epiweeks
+
+Counts_DistY <- as.data.frame(tapply(mal$malaria, list(mal$District, mal$Epiyear), length))
+
+# Well it doesn't look like the number of weeks are the same
+
+# What should be the number of Epiweeks for any given year? (get mode for the year)
+getmode <- function(v) {
+   uniqv <- unique(v)
+   uniqv[which.max(tabulate(match(v, uniqv)))]
+}
+
+wksPerYear  <- NULL
+ for (i in 1:7){
+   wksPerYear[i] <- getmode(Counts_DistY[[i]])
+ }
+
+# How many Districts in a given year have less than should?
+DistWithMissingWks <- NULL
+for (i in 1:7){
+  DistWithMissingWks[i] <- sum(Counts_DistY[i] < wksPerYear[i])
+}
+
+# which Districts have the lowest number of wks in a given year?
+MinWksCurr <- NULL
+MinWksCurr$Minwks <- 1:7
+MinWksDist <- NULL
+
+for (i in 1:7){
+  MinWksCurr <- data.frame(Counts_DistY[Counts_DistY[[i]] == min(Counts_DistY[[i]]),])
+  MinWksCurr$Minwks <- MinWksCurr[,i]
+  if (i == 1) {MinWksDist <-  MinWksCurr} else {
+    MinWksDist <- rbind(MinWksDist, MinWksCurr)
+  }
+}
+
+MinDist <- data.frame( District = rownames(MinWksDist), MinWk = MinWksDist)
+Years <- c(2010:2016)
+
+SupT1 <- data.frame(cbind(Years), wksPerYear, DistWithMissingWks, MinWks = MinWksDist$Minwks, District = rownames(MinWksDist))
+
+colnames(SupT1) <- c("Epiyear", "Epiweeks per year", "number of districts with missing weeks","lowest number of weeks per district", " District")
+
+# Table SupT1 will be presented at the end of the paper
+
+# there is a lot of missing weeks. But following up on this is beyond of the scope
+# of the project. To "diffuse" the effect of missing weeks I will aggregate
+# the data over Provinces
+
+```
+
+
+```{r additional_vars, include=FALSE}
+# create additional needed varibles
+mal$Pop_U5 <- mal$Population_UN*mal$u5weight
+mal$cpt <- mal$malaria/mal$Pop_U5*1000
+
+# number of days in a week with temperature optimal for mosquito (20-30C)
+mal$optTemp <- 7 - mal$tabove30 - mal$tbelow20 
+```
+
+
+
+
+```{r aggregate_year_district, include = FALSE}
+library(tidyverse)
+library(dplyr)
+
+# aggregate data for each district by year 
+
+# average yearly temperature for each district.
+tavgY <- aggregate(tavg ~ District + Epiyear, mal, mean)
+
+# total annual rain for each district.
+rainTotY <- aggregate(rainTot ~ District + Epiyear, mal, sum)
+
+# total annual cpt for each district
+cptY <- aggregate(cpt ~ District + Epiyear, mal, sum)
+
+# total annual cases for each district. 
+# adding Province, Population_U5 and SQKM will keep thesevariables in df
+# but will not further subgroup 
+# (since they are all sam for any given year for any district, may change by year though)
+
+malariaY <- aggregate(malaria ~ District + Epiyear + Province + Pop_U5 + SQKM + Region, mal, sum)
+
+#merge all above dfs
+malYDist <- merge(tavgY, rainTotY, by = c("District", "Epiyear"), all = T) %>%
+  merge(cptY, by = c("District", "Epiyear"), all = T) %>%
+  merge(malariaY, by = c("District", "Epiyear"), all = T)
+
+colnames(malYDist) <- c("District", "Year", "tavgY", "rainTotY", "cptY", "Province",
+                    "Pop_U5Y", "SQKMY", "Region","malariaY")
+
+```
+
+
+
+```{r Aggregate_year_province, include=F}
+
+# I will present variation in Yearly data across the country after aveaging per province
+# because: there are many districts with missing weeks
+
+library(knitr)
+library(dplyr)
+library(SDMTools)
+
+# Aggregate variables by Province and Epiyear for variation analysis
+# these should probably be weighted averages 
+# temperature and rain weighted by district area
+# cpt weighted by population U5
+
+malYProv <- malYDist %>%
+  group_by(Province, Year) %>%
+  summarise(
+    tavgYProv = wt.mean(tavgY, wt = SQKMY),
+    rainTotYProv = wt.mean(rainTotY, wt = SQKMY),
+    cptYProv = wt.mean(cptY, wt = Pop_U5Y),
+    malariaYProv = sum(malariaY),
+    Pop_U5YProv = sum(Pop_U5Y),
+    SQKMYProv = sum(SQKMY)
+  )
+
+```
+
+
+```{r TableI_variations_across_provinces_MAKE}
+library(knitr)
+library(SDMTools)
+library(dplyr)
+
+tab1Prov <- malYProv %>% 
+  group_by(Year) %>% 
+  summarise(
+  cptYProvavg = round(wt.mean(cptYProv, wt = Pop_U5YProv)),
+  cptYProvsd = round(wt.sd(cptYProv, wt = Pop_U5YProv)),
+  tavgYProvavg = round(wt.mean(tavgYProv, wt = SQKMYProv),1),
+  tavgYProvsd = round(wt.sd(tavgYProv, wt = SQKMYProv),1),
+  rainTotYProvavg = round(wt.mean(rainTotYProv, wt = SQKMYProv)),
+  rainTotYProvsd = round(wt.sd(rainTotYProv, wt = SQKMYProv)),
+  malariaYProvSUM = round(sum(malariaYProv))
+  ) %>%
+  mutate(cptYProvavg_sd = paste(cptYProvavg," (+/- ",cptYProvsd,")", sep = "")) %>%
+  mutate(rainTotYProvavg_sd = paste(rainTotYProvavg," (+/- ",rainTotYProvsd,")", sep = "")) %>%
+  mutate(tavgYProvavg_sd = paste(tavgYProvavg," (+/- ",tavgYProvsd,")", sep = "")) %>%
+  select(Year, malariaYProvSUM ,cptYProvavg_sd, rainTotYProvavg_sd, tavgYProvavg_sd)
+
+tab1ProvNamed <- tab1Prov
+colnames(tab1ProvNamed) <- c("Year", "Total cases of malaria " ,"annual cases/1000", "annual total rain", "average annual temperature (C)")
+
+
+```
+
+### Malaria cases and weather patterns in Mozambique in years 2010-2016
+
+In order to assess the burden of malaria in Mozambique, I have summarized the total malaria cases reported in this country in children under 5, in years 2010 - 2016, as well as the annual cases per thousand children, along with the variance across the provinces of Mozambique. To explore potential relationships of malaria incidence with weather patterns, I have summarized total yearly rain and average annual temperature, with variation across the provinces (Table I and Figure 1). As shown in Table I and Figure 1, Mozambique shoulders a heavy burden of malaria, with a total of `r I(format(tab1Prov$malariaYProvSUM[tab1Prov$Year == "2016"], big.mark = ","))` cases reported in 2016. What is worrying, this number represents nearly a doubling from the year 2010, in which `r I(format(tab1Prov$malariaYProvSUM[tab1Prov$Year == "2010"], big.mark = ","))` cases were reported. In a similar manner, the annual incidence of malaria increased sharply from `r I(format(tab1Prov$cptYProvavg_sd[tab1Prov$Year == "2010"], big.mark = ","))` in 2010 to `r I(format(tab1Prov$cptYProvavg_sd[tab1Prov$Year == "2016"], big.mark = ","))`  in 2016. The total annual rainfall and average temperature across Mozambique have also increased from 2010 to 2016, however, there is no simple temporal correlation between these changes and malaria occurrence.
+
+```{r TableI_variations_across_provinces_PRESENT}
+kable(tab1ProvNamed, align = 'c', caption = "Table I. Annual malaria cases and weather patterns in Mozambique (2010-2016); weighted average (+/- standard deviation)", trim = T)
+```
+
+###
+
+
+```{r Fig1_Box_plots_yearly_province_avg, fig.width=7}
+
+# Total annual cases in Mozambique
+plot1 <- ggplot(data = tab1Prov, aes(x = as.factor(Year), y = malariaYProvSUM)) + 
+  geom_col() +
+  labs( x = "Year",
+        y = "Total malaria cases")
+
+
+# annual cpt, Province weighted average
+plot2 <-ggplot(data = malYProv, aes(x = as.factor(Year), y = cptYProv)) + 
+  geom_boxplot() + 
+  geom_point() +
+  labs( x = "Year",
+        y = "cases/1000, annually")
+
+# total yearly rain, Province weighted average
+plot3 <- ggplot(data = malYProv, aes(x = as.factor(Year), y = rainTotYProv)) + 
+  geom_boxplot() + 
+  geom_point() +
+  labs( x = "Year",
+        y = "Total annual rain")
+
+# average yearly temeprature, Province weighted average
+plot4 <- ggplot(data = malYProv, aes(x = as.factor(Year), y = tavgYProv)) + 
+  geom_boxplot() + 
+  geom_point() +
+  labs( x = "Year",
+        y = "Average yearly temp")
+
+grid.arrange(plot1, plot2, plot3, plot4, ncol = 2, top = "Fig.1. Overall malaria and weather trends in Mozambique")
+
+
+```
+
+
+
+```{r Fig2_malaria_trends_region_MAKE}
+
+# total Malaria per region & year
+malYR <- malYDist %>%
+  group_by(Region, Year) %>%
+  summarise(malariaYRSUM = round(sum(malariaY))
+  )
+
+malYR2016 <- malYR %>%
+  filter(Year == 2016)
+
+Regplot1<- ggplot(malYR, mapping = aes(x = Year)) +
+  geom_line(aes(y = malariaYRSUM, color = Region)) +
+  labs( x = "Year",
+        y = "Total malaria cases")
+
+#smoothed cptY per region & year
+Regplot2 <- ggplot(malYDist, mapping = aes(x = Year)) +
+  geom_smooth(aes(y = cptY, color = Region)) +
+  labs( x = "Year",
+        y = "cases/1000, annualy")
+
+#smoothed total rain per regoin and year
+Regplot3 <- ggplot(malYDist, mapping = aes(x = Year)) +
+  geom_smooth(aes(y = rainTotY, color = Region)) +
+  labs( x = "Year",
+        y = "Total annual rainfall (mm)")
+
+
+#smoothed average temperature per region and year
+Regplot4 <- ggplot(malYDist, mapping = aes(x = Year)) +
+  geom_smooth(aes(y = tavgY, color = Region)) +
+  labs( x = "Year",
+        y = "average annual temp (C)")
+
+```
+
+### Variation in malaria and weather trends by region
+
+As shown in Figure 2, the burden of malaria is high in Coastal, Northern, and Central regions of Mozambique, with total cases in 2016 being `r I(format (malYR2016$malariaYRSUM[malYR2016$Region == "Coastal"], big.mark = ","))`;  `r I(format (malYR2016$malariaYRSUM[malYR2016$Region == "Northern"], big.mark = ","))` ; and  `r I(format (malYR2016$malariaYRSUM[malYR2016$Region == "Center"], big.mark = ","))`; respectively. These three regions also experienced a sharp increase in malaria cases during the 2010-2016 period, with the highest increase between years 2012 - 2014. In contrast, the Southern region had relatively fewer cases of malaria in 2016, `r I(format (malYR2016$malariaYRSUM[malYR2016$Region == "Southern"], big.mark = ","))`; and has experinced only a mild increase in the years 2010-2016. 
+Similar upward trends were also observed for the annual incidence of malaria. In all 4 regions of Mozambique the number of cases per 1000 children under 5 annually increased between 2010 and 2016, with the sharpest increase between 2012 and 2014. The northern region had the highest incidence in 2016, and the southern had the lowest. The Southern region had the lowest incidence of malaria. Analysis of average temperature and total rain also show overall increases between the years 2010 and 2016. However, the pattern of increase by region does not directly match the pattern of the increase in malaria incidence. Likely, the relationship between the weather variables and malaria incidence is more complex.
+
+
+```{r Fig2_malaria_trends_region_PRESENT, fig.width=7}
+grid.arrange(Regplot1, Regplot2, Regplot3, Regplot4, nrow = 2, top = "Fig.2. Variation in malaria and weather trends by region")
+```
+
+
+
+
+```{r MAPS_data_prep, include=F}
+
+library(dplyr)
+# tables for merging with shapefile
+
+# total annual malaria cases, province total
+malariaYProvM <- as.data.frame(tapply(malYDist$malariaY, list(malYDist$Province, malYDist$Year), sum))
+colnames(malariaYProvM) <- c("malTot10", "malTot11", "malTot12", "malTot13", "malTot14", "malTot15", "malTot16")
+
+# cases per 1000 annually, province weighted average
+cptYProvM <- malYDist %>% 
+  group_by(Year, Province) %>% 
+  summarise(cptYProvavg = round(wt.mean(cptY, wt = Pop_U5Y)))
+  
+cptYProvM <- as.data.frame(tapply(cptYProvM$cptYProvavg, list(cptYProvM$Province, cptYProvM$Year), sum))
+
+colnames(cptYProvM) <- c("cptYavg10", "cptYavg11", "cptYavg12", "cptYavg13", "cptYavg14", "cptYavg15", "cptYavg16")
+
+# annual total rain, province weighted average
+rainTotYProvM <- malYDist %>% 
+  group_by(Year, Province) %>% 
+  summarise(rainTotYProvavg = round(wt.mean(rainTotY, wt = SQKMY)))
+  
+rainTotYProvM <- as.data.frame(tapply(rainTotYProvM$rainTotYProvavg, list(rainTotYProvM$Province, rainTotYProvM$Year), sum))
+
+colnames(rainTotYProvM) <- c("rainTotYavg10", "rainTotYavg11", "rainTotYavg12", "rainTotYavg13", "rainTotYavg14", "rainTotYavg15", "rainTotYavg16")
+
+# average annual temperature, province weighted average
+tavgYProvM <- malYDist %>% 
+  group_by(Year, Province) %>% 
+  summarise(tavgYProvavg = round(wt.mean(tavgY, wt = SQKMY)))
+  
+tavgYProvM <- as.data.frame(tapply(tavgYProvM$tavgYProvavg, list(tavgYProvM$Province, tavgYProvM$Year), sum))
+
+colnames(tavgYProvM) <- c("tavgYavg10", "tavgYavg11", "tavgYavg12", "tavgYavg13", "tavgYavg14", "tavgYavg15", "tavgYavg16")
+
+
+allStatsYProv <- as.data.frame(cbind(malariaYProvM, cptYProvM,rainTotYProvM, tavgYProvM )) 
+```
+
+
+
+
+```{r Mozambique_map_import_and_merge, include = F}
+
+# import Mozambique map shapefile with provinces
+try(poly1 <- readShapePoly('C:/Users/Joanna/OneDrive - The University of Colorado Denver/BIOS 6640/data/mozambique_admin1.shp', IDvar="NAME1"))
+
+try(poly1 <- readShapePoly('D:/OneDrive - The University of Colorado Denver/BIOS 6640/data/mozambique_admin1.shp', IDvar="NAME1"))
+
+# Examine if names in AllStats_forMan and the shapefile have same spelling
+# and if they are aligned
+data.frame(rownames(allStatsYProv), poly1$NAME1)
+
+# they don't have the same spelling but they are aligned (no need to reorder)
+# replace rownames from allStats_forMap with the shapefile names
+rownames(allStatsYProv) <- poly1$NAME1
+
+# merge allStats object with shape polygons
+polydat <- SpatialPolygonsDataFrame(poly1, allStatsYProv)
+```
+
+### Clustering of malaria cases across the Provinces of Mozambique in years 2010 - 2016
+
+Analysis of spacial distribution of total malaria cases and incidence per 1000, presented in the maps in Figure 3, confirm that the heaviest burden is shouldered by the northern provinces. This pattern correlates with the with heavier rainfall, but weakly with average temperature. The maps also indicate that between the years 2010 and 2016 there was an increase in average yearly temperature in all provinces of Mozambique, increased total rainfall, and this was associated with increased malaria cases.
+
+```{r Fig.3.MAPS}
+# Total malaria cases in children under 5 - anual total for Province
+malPal <- brewer.pal(n = 7, name = "Greys")
+plot1 <- spplot(polydat, c("malTot11", "malTot12", "malTot13", "malTot14", "malTot15", "malTot16"), 
+            names.attr = c("2011", "2012", "2013", "2014", "2015", "2016"), 
+            colorkey=list(space="right", height = 1, width = 1), 
+            scales = list(draw = TRUE, cex = 0.6), 
+            main = list(label = "Total under 5 malaria cases by year", cex = 1), 
+            as.table = TRUE, col.regions = malPal, col="black", cuts= 5,
+            strip = strip.custom (par.strip.text = list(cex = 0.8)),
+            par.settings =list(fontsize = list(text = 8 )))
+
+
+# Annual cases per thousand, Province average
+cptPal <- brewer.pal(n = 7, name = "Blues")
+plot2 <- spplot(polydat, c("cptYavg11", "cptYavg12", "cptYavg13", "cptYavg14", "cptYavg15", "cptYavg16"), 
+            names.attr = c("2011", "2012", "2013", "2014", "2015", "2016"), 
+            colorkey=list(space="right", height = 1, width = 1), 
+            scales = list(draw = TRUE, cex = 0.6), 
+            main = list(label = "Annual malaria cpt ", cex = 1), 
+            as.table = TRUE, col.regions = cptPal, col="black", cuts= 5,
+            strip = strip.custom (par.strip.text = list(cex = 0.8)),
+            par.settings =list(fontsize = list(text = 8 )))
+
+# total yearly rain (province average)
+rainPal <- brewer.pal(n = 7, name = "YlGnBu")
+plot3 <- spplot(polydat, c("rainTotYavg11", "rainTotYavg12", "rainTotYavg13", "rainTotYavg14", "rainTotYavg15", "rainTotYavg16"), 
+             names.attr = c("2011", "2012", "2013", "2014", "2015", "2016"), 
+             colorkey=list(space="right", height = 1, width = 1), 
+             scales = list(draw = TRUE, cex = 0.6), 
+             main = list(label = "Total rainfall by year", cex = 1), 
+             as.table = TRUE, col.regions = rainPal, col="black", cuts= 5,
+             strip = strip.custom (par.strip.text = list(cex = 0.8)),
+             par.settings =list(fontsize = list(text = 8 )))
+
+# average yearly temperature (Province average)
+tempPal <- brewer.pal(n = 7, name = "YlOrRd")
+plot4 <- spplot(polydat, c("tavgYavg11", "tavgYavg12", "tavgYavg13", "tavgYavg14", "tavgYavg15", "tavgYavg16"), 
+            names.attr = c("2011", "2012", "2013", "2014", "2015", "2016"), 
+            colorkey=list(space="right", height = 1, width = 1), 
+            scales = list(draw = TRUE, cex = 0.6), 
+            main = list(label = "Average annual temperature", cex = 1), 
+            as.table = TRUE, col.regions = tempPal, col="black", cuts= 5,
+            strip = strip.custom (par.strip.text = list(cex = 0.8)),
+            par.settings =list(fontsize = list(text = 8 )))
+
+
+grid.arrange(plot1, plot2, ncol = 2, top = "Fig.3. Maps of malaria and weather patterns ")
+grid.arrange(plot3, plot4, ncol = 2)
+
+
+```
+
+
+
+
+
+
+```{r, average_wk_Province, include=FALSE}
+# average data for each province (per each week of each year)
+malProv <- mal %>% 
+  group_by(Province, Epiyear, Epiweek) %>% 
+  summarise(
+  cpt = round(wt.mean(cpt, wt = Pop_U5)),
+  tavg = wt.mean(tavg, wt = SQKM),
+  rainTot = wt.mean(rainTot, wt = SQKM),
+  optTemp = wt.mean(optTemp, wt = SQKM),
+  rh = wt.mean(rh,wt = SQKM)
+  )
+
+
+```
+
+
+```{r lagged_vars}
+
+library(dplyr)
+
+# make sure all entries are sorted by Province, year and week
+malPlags <- arrange(malProv, Province, Epiyear, Epiweek)
+ 
+# the code below allows to create several lagged variables by using a "for" loop
+# specify min lag and max lag here
+# in further analyses I will only evaluate lags 2, 4 and 8
+# but if needed, I have the whole range of lagged variables!
+# magic evaluation in "mutate" interprets LagVarName value as column name!
+
+minlag <- 2
+maxlag <- 12
+
+# create lagged variables for tavg
+for (i in minlag:maxlag) {
+  LagVarName <- paste("tavg_lag", i , sep = "")
+  malPlags <- group_by(malPlags,Province) %>%
+    
+  mutate(!!LagVarName := lag(tavg, n = i)) 
+} 
+
+# create lagged varibles for RainTot
+for (i in minlag:maxlag) {
+  LagVarName <- paste("rainTot_lag", i , sep = "")
+  malPlags <- group_by(malPlags,Province) %>%
+  mutate(!!LagVarName := lag(rainTot, n = i))
+}
+
+# create lagged variables for optTemp
+for (i in minlag:maxlag) {
+  LagVarName <- paste("optTemp_lag", i , sep = "")
+  malPlags <- group_by(malPlags,Province) %>%
+  mutate(!!LagVarName := lag(optTemp, n = i))
+}
+
+# create lagged variables for relative humidity
+for (i in minlag:maxlag) {
+  LagVarName <- paste("rh_lag", i , sep = "")
+  malPlags <- group_by(malPlags,Province) %>%
+  mutate(!!LagVarName := lag(rh, n = i))
+}
+```
+
+###Lagged temporal relationship between malaria incidence and weather
+
+As previously indicated, malaria incidence is dependent on warmer temperature and increased humidity, however, the temporal relationship between these variables is complex. Likely, due to the time needed for the expansion of the mosquito population, there is a several week lag between the favorable weather conditions and the increase in malaria cases registered in a given province. To examine these relationships I plotted the following variables: relative humidity, total weekly rainfall, average weekly temperature, and the number of days per week when the temperature is optimal for mosquito development (20-30 degrees C).  Perhaps examining the days with temperature range 20-25 C would provide more precise results, however that variable was not available in the data set. To examine how malaria incidence is related to prior weather conditions, all variables were lagged by 2, 4 or 8 weeks and plotted vs. cases per thousand. As shown in Fig.4, malaria incidence correlates positively with relative humidity, and the correlation is strongest for the humidity recorded 4 weeks prior to the registration of malaria cases (4 week lag). Total rainfall, on the other hand, has a non-linear relationship with malaria. The cases increase with rainfall, up to about 100 mm, however further rainfall does not increase the number of cases. Average temperature also has a non-linear, likely quadratic,  relationship with malaria, and indicates that 20-25 C is most highly correlated with increased malaria. The correlation is again strongest for the 4 week lag. The number of days per week with optimal temperature also shows a complex, fluctuating relationship with malaria.
+
+
+```{r Fig4_lagged_vars_PLOTS, fig.width = 7}
+plot1 <- ggplot(data = malPlags) +
+  geom_smooth(mapping = aes(x = rh_lag2, y = cpt), color = "red") +
+  geom_smooth(mapping = aes(x = rh_lag4, y = cpt), color = "green") +
+  geom_smooth(mapping = aes(x = rh_lag8, y = cpt), color = "yellow") +
+  labs( x = "relative humidity, lagged",
+        y = "cases/1000")
+
+plot2 <- ggplot(data = malPlags) +
+  geom_smooth(mapping = aes(x = (rainTot_lag2), y = cpt), color = "red") +
+  geom_smooth(mapping = aes(x = (rainTot_lag4), y = cpt), color = "green") +
+  geom_smooth(mapping = aes(x = (rainTot_lag8), y = cpt), color = "yellow") +
+  labs( x = "total rainfall, lagged",
+        y = "cases/1000")
+ 
+plot3 <- ggplot(data = malPlags) +
+  geom_smooth(mapping = aes(x = optTemp_lag2, y = cpt), color = "red") +
+  geom_smooth(mapping = aes(x = optTemp_lag4, y = cpt), color = "green") +
+  geom_smooth(mapping = aes(x = optTemp_lag8, y = cpt), color = "yellow") +
+  labs( x = "days with optimal temp/week, lagged",
+        y = "cases/1000")
+ 
+plot4 <- ggplot(data = malPlags) +
+  geom_smooth(mapping = aes(x = tavg_lag2, y = cpt), color = "red") +
+  geom_smooth(mapping = aes(x = tavg_lag4, y = cpt), color = "green") +
+  geom_smooth(mapping = aes(x = tavg_lag8, y = cpt), color = "yellow") +
+  labs( x = "average temperature, lagged",
+        y = "cases/1000")
+ 
+grid.arrange(plot1, plot2, plot3, plot4, ncol = 2,
+              top = "Fig.4. Time-lagged relationship between malaria incidence and weather variables ",
+              bottom = " red: 2 wk lag, green: 4 wk lag, yellow: 8wk lag")
+
+
+ 
+```
+
+Figure 4 indicates that while there seems to be a direct relationship between relative humidity 4 weeks prior to malaria occurrence, the relationship with the temperature may be more complex, possibly depending on the province of Mozambique. To examine these relationship in more detail I have plotted, for each province, the incidence of malaria as it varies across the weeks of a year, along with the relative humidity lagged by 4 weeks, and the number of days per week with optimal temperature, also lagged by 4 weeks (Fig.5). The analysis of these graphs indicates that there is a tight relationship between the relative humidity lagged by 4 weeks and malaria cases for each province, however the optimal temperature lagged by four weeks, does not coincide with the malaria pattern.
+
+```{r Fig5_cpt_byWK_vs_weather, fig.width=7}
+
+library(arm)
+
+plot1 <- ggplot(data = malPlags, mapping = aes( x= Epiweek)) +
+  geom_smooth(mapping = aes(y = rescale(cpt), color = "cpt")) +
+  #geom_smooth(mapping = aes(y = rescale(tavg_lag4)), color="yellow") +
+  geom_smooth(mapping = aes(y = rescale(optTemp_lag4), color = "days with opt temp, lag 4")) +
+  #geom_smooth(mapping = aes(y = rescale((rainTot_lag4))), color = "green") +
+  geom_smooth(mapping = aes(y = rescale(rh_lag4), color = "relative humidity, lag 4 ")) +
+  facet_wrap(~ Province, nrow = 2) +
+  labs(x = "week",
+       y = "rescaled variables") +
+  theme(legend.position = "bottom", legend.title = element_blank())
+
+grid.arrange(plot1, 
+             top = "Fig.5. Temporal relationship between malaria incidence, humidity, and temperature 4 weeks prior")
+```
+
+### Conclusions
+
+This report shows that Mozambique shoulders a heavy burden of malaria, which has increased dramatically between the years 2010 and 2016. The most affected is the northern region, both in the terms of total number of cases as well as incidence poer thousand children under 5 years of age. The increase in malaria cases is accompanied by increases in total rainfall and average temperature in this time period. The fluctuation of case numbers during the weeks of the year has a complex, time - lagged relationship with the weather factors. This report has identified the relative humidity 4 weeks prior to the occurrence of malaria cases as the variable most closely following the pattern of malaria. Thus, examination the humidity patterns across the country may help predict the time and place of the increase in malaria incidence.   
+
+
+
+### References
+
+[1] Kafai NM, Odom John AR. Malaria in Children. Infect Dis Clin North Am. 2018 Mar;32(1):189-200. 
+
+[2] Eikenberry SE, Gumel AB. Mathematical modeling of climate change and malaria transmission dynamics: a historical review. J Math Biol. 2018 Oct;77(4):857-933. 
+
+[3] Phillips MA, Burrows JN, Manyando C, van Huijsduijnen RH, Van Voorhis WC, Wells TNC. Malaria. Nat Rev Dis Primers. 2017 Aug 3;3:17050. 
+
+[4] Tizifa TA, Kabaghe AN, McCann RS, van den Berg H, Van Vugt M, Phiri KS. Prevention Efforts for Malaria. Curr Trop Med Rep. 2018;5(1):41-50
+
+[5] Shretta R, Liu J, Cotter C, Cohen J, Dolenz C, Makomva K, Newby G, Ménard D, Phillips A, Tatarsky A, Gosling R, Feachem R. Malaria Elimination and Eradication. In: Holmes KK, Bertozzi S, Bloom BR, Jha P, editors. Major Infectious Diseases. 3rd edition. Washington (DC): The International Bank for Reconstruction and Development / The World Bank; 2017 Nov. Chapter 12.
+
+
+```{r SupT1}
+library(knitr)
+kable(SupT1, align = 'c', caption = "Supplemental Table I. Missing weekly entires")
+
+```
+
+
+
